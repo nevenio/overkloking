@@ -13,20 +13,18 @@ import (
 	"strings"
 
 	"github.com/ChimeraCoder/anaconda"
-	"github.com/PuerkitoBio/goquery"
+
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/tidwall/gjson"
 	"gopkg.in/headzoo/surf.v1"
 )
 
 type comic struct {
 	title   string
-	date    string
 	imgLink string
 }
 
-const comicsLink = "https://net.hr/kategorija/webcafe/overkloking/"
-
-var comics []comic
+const comicsLink = "https://net.hr/webcafe/overkloking"
 
 var (
 	apiKey            = os.Getenv("TWITTER_APIKEY")
@@ -42,29 +40,20 @@ func getlastComic() (comic, error) {
 		panic(err)
 	}
 
-	browser.Find(".article-feed").Each(func(_ int, s *goquery.Selection) {
-		title := s.Find(".article-text>a>h1").Text()
-		date := strings.Replace(strings.TrimSpace(s.Find(".article-text>p.undertitle").Text()), "Overkloking", "", -1)
-		imgLink, _ := s.Find(".thumb>img").Attr("src")
-		date = strings.TrimSpace(date)
+	browser.Click("a.cardInner")
+	json := browser.Find("#__NEXT_DATA__").Text()
+	imageLink := gjson.Get(json, "props.initialProps.pageProps.entityData.image.original_url").String()
+	title := browser.Find(".title_title").Text()
 
-		questionMarkIndex := strings.Index(imgLink, "?")
-		imgLink = imgLink[:questionMarkIndex]
-
-		comic := comic{
-			title:   title,
-			date:    date,
-			imgLink: imgLink,
-		}
-		comics = append(comics, comic)
-	})
-
-	lastComic := comics[0]
+	lastComic := comic{
+		title:   title,
+		imgLink: imageLink,
+	}
 
 	if lastComic.title == "" {
-		return lastComic, errors.New("Title is missing")
+		return lastComic, errors.New("title is missing")
 	} else if lastComic.imgLink == "" {
-		return lastComic, errors.New("Image link is missing")
+		return lastComic, errors.New("image link is missing")
 	} else {
 		return lastComic, nil
 	}
@@ -106,6 +95,9 @@ func postTwit(lastComic comic, api *anaconda.TwitterApi) {
 
 	imageBase64 := base64.StdEncoding.EncodeToString(contents)
 	mediaResponse, err := api.UploadMedia(imageBase64)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	vars := url.Values{}
 	vars.Set("media_ids", strconv.FormatInt(mediaResponse.MediaID, 10))
@@ -129,7 +121,8 @@ func overkloking() {
 		log.Fatal(err)
 	}
 	lastComicTitle := strings.TrimSpace(strings.ToLower(lastComic.title))
-
+	println("lastComicTitle: ", lastComicTitle)
+	println("lastComicImgLink: ", lastComic.imgLink)
 	if lastTwit != lastComicTitle {
 		postTwit(lastComic, api)
 	}
